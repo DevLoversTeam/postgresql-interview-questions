@@ -2139,3 +2139,101 @@ USING (tenant_id = current_setting('app.tenant_id')::uuid);
 - Найбільше проблем запобігаються моніторингом, backup/restore тестами і регулярним тюнінгом SQL.
 
 </details>
+<details>
+<summary>101. Які типи індексів існують у PostgreSQL?</summary>
+
+#### PostgreSQL
+
+Основні типи індексів у PostgreSQL:
+
+- `B-tree` (за замовчуванням): `=`, діапазони (`<`, `>`, `BETWEEN`), `ORDER BY`.
+- `GIN`: `JSONB`, масиви, full-text (`tsvector`), пошук по елементах/ключах.
+- `GiST`: геодані (PostGIS), діапазони, nearest-neighbor (залежно від типу).
+- `BRIN`: дуже великі таблиці, де дані фізично корельовані (часто time-series).
+- `HASH`: вузький кейс для `=`; використовується рідко.
+
+```sql
+CREATE INDEX idx_orders_customer_id ON orders (customer_id);
+CREATE INDEX idx_events_payload_gin ON events USING GIN (payload);
+```
+
+**Коротко:**
+
+- Тип індексу обирають під тип даних і конкретні умови запитів.
+- Для більшості OLTP-кейсів достатньо `B-tree`, для `JSONB` часто потрібен `GIN`.
+
+</details>
+<details>
+<summary>102. У яких випадках доречно використовувати HASH index у PostgreSQL?</summary>
+
+#### PostgreSQL
+
+`HASH`-індекс доречний у вузькому сценарії: коли переважна більшість запитів робить точний пошук по рівності (`=`) і немає потреби в діапазонах чи сортуванні.
+
+Важливі обмеження/нюанси:
+
+- `HASH` не допомагає для `ORDER BY`, `BETWEEN`, префіксних/діапазонних умов.
+- У більшості практичних випадків `B-tree` дає таку саму (або кращу) користь для `=` і при цьому універсальніший.
+- Рішення варто приймати лише після вимірювання через `EXPLAIN (ANALYZE, BUFFERS)` і реального профілю запитів.
+
+```sql
+CREATE INDEX idx_sessions_token_hash ON sessions USING HASH (token);
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM sessions
+WHERE token = '...';
+```
+
+**Коротко:**
+
+- `HASH` має сенс майже виключно для частих `=` по одному полю.
+- Зазвичай `B-tree` простіший і практичніший вибір, якщо немає доведеного виграшу.
+
+</details>
+<details>
+<summary>103. Як PostgreSQL визначає, коли потрібно запускати autovacuum для таблиці?</summary>
+
+#### PostgreSQL
+
+Autovacuum запускає `VACUUM`/`ANALYZE`, коли кількість змін у таблиці перетинає пороги.
+
+Поріг для vacuum (спрощено):
+
+- `dead_tuples >= autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor * reltuples`
+
+Поріг для analyze (спрощено):
+
+- `changed_tuples >= autovacuum_analyze_threshold + autovacuum_analyze_scale_factor * reltuples`
+
+Де дивитися поточний стан:
+
+```sql
+SELECT
+  relname,
+  n_live_tup,
+  n_dead_tup,
+  last_vacuum,
+  last_autovacuum,
+  last_analyze,
+  last_autoanalyze
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 20;
+```
+
+Тюнінг часто роблять per-table (для “гарячих” таблиць):
+
+```sql
+ALTER TABLE orders SET (
+  autovacuum_vacuum_scale_factor = 0.02,
+  autovacuum_analyze_scale_factor = 0.02
+);
+```
+
+**Коротко:**
+
+- Autovacuum тригериться порогами: базове значення + відсоток від розміру таблиці.
+- Для write-heavy таблиць зазвичай зменшують scale factor і моніторять `n_dead_tup`.
+
+</details>
